@@ -308,6 +308,14 @@ func New(l log.Logger, conf *SDConfig) (*Discovery, error) {
 	case conf.APIServer.URL == nil:
 		// Use the Kubernetes provided pod service account
 		// as described in https://kubernetes.io/docs/admin/service-accounts-admin/
+		// 很多时候我们并不需要配置api server相关信息也可以进行服务发现，如我们将上面示例简化如下写法：
+		//   - job_name: kubernetes-pod
+		//    kubernetes_sd_configs:
+		//    - role: pod
+		//      namespaces:
+		//        names:
+		//        - 'test01'
+		// 一般Prometheus部署在监控云原生集群上，从 Pod 使用 Kubernetes API 官方客户端库(client-go)提供了更为简便的方法：rest.InClusterConfig()。API Server地址是从POD的环境变量KUBERNETES_SERVICE_HOST和KUBERNETES_SERVICE_PORT构建出来， token 以及 ca 信息从POD固定的文件中获取，因此这种场景下kubernetes_sd_configs中api_server和ca_file是不需要配置的。
 		kcfg, err = rest.InClusterConfig()
 		if err != nil {
 			return nil, err
@@ -387,10 +395,16 @@ func mapSelector(rawSelector []SelectorConfig) roleSelector {
 const resyncDisabled = 0
 
 // Run implements the discoverer interface.
+// Run方法中switch罗列出不同role的处理逻辑，刚好和配置示例中role支持的六种云原生对象类型对应，只是基于不同的对象进行服务发现，基本原理都是一致的。
+// 云原生服务发现基本原理是访问API Server获取到云原生集群资源对象，
+// Prometheus与API Server进行交互这里使用到的是client-go官方客户端里的Informer核心工具包。
+// Informer底层使用ListWatch机制，在Informer首次启动时，会调用List API获取所有最新版本的资源对象，缓存在内存中
+// ，然后再通过Watch API来监听这些对象的变化，去维护这份缓存，降低API Server的负载。除了ListWatch，Informer还可以注册自定义事件处理逻辑，
+// 之后如果监听到事件变化就会调用对应的用户自定义事件处理逻辑，这样就实现了用户业务逻辑扩展。
 func (d *Discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 	d.Lock()
 	namespaces := d.getNamespaces()
-
+	// 这里针对Pod进行解析整个流程
 	switch d.role {
 	case RoleEndpointSlice:
 		// Check "networking.k8s.io/v1" availability with retries.
@@ -456,6 +470,7 @@ func (d *Discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 					return s.Watch(ctx, options)
 				},
 			}
+			// ListFunc就是Clientset的List函数
 			p := d.client.CoreV1().Pods(namespace)
 			plw := &cache.ListWatch{
 				ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
@@ -463,6 +478,7 @@ func (d *Discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 					options.LabelSelector = d.selectors.pod.label
 					return p.List(ctx, options)
 				},
+				// WatchFunc就是Clientset的Watch函数
 				WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 					options.FieldSelector = d.selectors.pod.field
 					options.LabelSelector = d.selectors.pod.label
@@ -478,6 +494,7 @@ func (d *Discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 				log.With(d.logger, "role", "endpointslice"),
 				informer,
 				cache.NewSharedInformer(slw, &apiv1.Service{}, resyncDisabled),
+				// 基于ListWatch创建Informer
 				cache.NewSharedInformer(plw, &apiv1.Pod{}, resyncDisabled),
 				nodeInf,
 			)
@@ -545,6 +562,7 @@ func (d *Discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 			go eps.serviceInf.Run(ctx.Done())
 			go eps.podInf.Run(ctx.Done())
 		}
+		// 这里针对Pod进行解析整个流程
 	case RolePod:
 		var nodeInformer cache.SharedInformer
 		if d.attachMetadata.Node {
@@ -572,6 +590,7 @@ func (d *Discovery) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 				nodeInformer,
 			)
 			d.discoverers = append(d.discoverers, pod)
+			// 最后启动Informer，让整个流程运转起来；
 			go pod.podInf.Run(ctx.Done())
 		}
 	case RoleService:
