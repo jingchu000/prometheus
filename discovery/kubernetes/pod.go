@@ -65,6 +65,18 @@ func NewPod(l log.Logger, pods cache.SharedIndexInformer, nodes cache.SharedInfo
 		logger:           l,
 		queue:            workqueue.NewNamed("pod"),
 	}
+	// 这里的 podAddCount、podDeleteCount和podUpdateCount分别对应下面三个指标序列，指标含义也比较明显：
+	//
+	//prometheus_sd_kubernetes_events_total(role="pod", event="add")
+	//
+	//prometheus_sd_kubernetes_events_total(role="pod", event="delete")
+	//
+	//prometheus_sd_kubernetes_events_total(role="pod", event="update")
+	//
+	//role标识资源类型，包括："endpointslice", "endpoints", "node", "pod", "service", "ingress"五种类型；
+	//
+	//event标识事件类型，包括："add", "delete", "update"三种类型。
+	// 注册资源事件，分别对应资源创建、资源删除和资源更新事件处理；
 	_, err := p.podInf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(o interface{}) {
 			podAddCount.Inc()
@@ -107,11 +119,13 @@ func NewPod(l log.Logger, pods cache.SharedIndexInformer, nodes cache.SharedInfo
 }
 
 func (p *Pod) enqueue(obj interface{}) {
+	// 获取资源对象的Key
 	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		return
 	}
 
+	// 将资源对象的key写入到WorkQueue中
 	p.queue.Add(key)
 }
 
@@ -140,24 +154,27 @@ func (p *Pod) Run(ctx context.Context, ch chan<- []*targetgroup.Group) {
 	<-ctx.Done()
 }
 
+// 对于POD资源，这里的key就是：namespace/pod_name格式，比如key=test01/nginx-deployment-5ffc5bf56c-n2pl8。
 func (p *Pod) process(ctx context.Context, ch chan<- []*targetgroup.Group) bool {
+	// workqueue中取出key
 	keyObj, quit := p.queue.Get()
 	if quit {
 		return false
 	}
 	defer p.queue.Done(keyObj)
 	key := keyObj.(string)
-
+	// 从key解析出namespce和Podname
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return true
 	}
-
+	// 基于key从本读缓存中查询出对象信息
 	o, exists, err := p.store.GetByKey(key)
 	if err != nil {
 		return true
 	}
 	if !exists {
+		// 如果key在本地缓存不存在，则表示当前对象删除，这里则发送一个空的采集点集合，目的是将之前基于该pod生成的所有采集点覆盖掉
 		send(ctx, ch, &targetgroup.Group{Source: podSourceFromNamespaceAndName(namespace, name)})
 		return true
 	}
@@ -166,6 +183,8 @@ func (p *Pod) process(ctx context.Context, ch chan<- []*targetgroup.Group) bool 
 		level.Error(p.logger).Log("msg", "converting to Pod object failed", "err", err)
 		return true
 	}
+	// 基于Pod信息，使用buildPod（）方法构建出采集点，然后send函数中，将这些采集点信息发送到ch通道上，这样就能贝updater协程监听到。
+	// 针对Pod里的每个Container上的每个port，都会生成一个对应采集点target，其中__address__就是PodIP+port组合。
 	send(ctx, ch, p.buildPod(pod))
 	return true
 }

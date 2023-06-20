@@ -227,24 +227,29 @@ func init() {
 }
 
 // scrapePool manages scrapes for sets of targets.
+// scrapeLoop实现loop接口，封装了发送http请求采集数据指标逻辑的Target执行单元：」
 type scrapePool struct {
+	// 存储指标
 	appendable storage.Appendable
-	logger     log.Logger
-	cancel     context.CancelFunc
-	httpOpts   []config_util.HTTPClientOption
+	// 一个scrapePool对应一个Job，config即为该job配置
+	logger   log.Logger
+	cancel   context.CancelFunc
+	httpOpts []config_util.HTTPClientOption
 
 	// mtx must not be taken after targetMtx.
 	mtx    sync.Mutex
 	config *config.ScrapeConfig
+	// 基于job配置生成http请求客户端工具，比如封装认证信息等
 	client *http.Client
 	loops  map[uint64]loop
 
 	targetMtx sync.Mutex
 	// activeTargets and loops must always be synchronized to have the same
 	// set of hashes.
+	// relabe 后有效的采集电
 	activeTargets  map[uint64]*Target
 	droppedTargets []*Target
-
+	// 生成scrapeLoop工厂函数
 	// Constructor for new scrape loops. This is settable for testing convenience.
 	newLoop func(scrapeLoopOptions) loop
 
@@ -507,6 +512,7 @@ func (sp *scrapePool) Sync(tgs []*targetgroup.Group) {
 	lb := labels.NewBuilder(labels.EmptyLabels())
 	sp.droppedTargets = []*Target{}
 	for _, tg := range tgs {
+		//  //基于targetgroup.Group构建target集合
 		targets, failures := TargetsFromGroup(tg, sp.config, sp.noDefaultPort, targets, lb)
 		for _, err := range failures {
 			level.Error(sp.logger).Log("msg", "Creating target failed", "err", err)
@@ -518,13 +524,15 @@ func (sp *scrapePool) Sync(tgs []*targetgroup.Group) {
 			t.LabelsRange(func(l labels.Label) { nonEmpty = true })
 			switch {
 			case nonEmpty:
+				// //relabel后符合要求的采集点
 				all = append(all, t)
-			case !t.discoveredLabels.IsEmpty():
+			case !t.discoveredLabels.IsEmpty(): // //relabel后不符合要求的采集点：废弃
 				sp.droppedTargets = append(sp.droppedTargets, t)
 			}
 		}
 	}
 	sp.targetMtx.Unlock()
+	// 这里同步  拉取数据
 	sp.sync(all)
 
 	targetSyncIntervalLength.WithLabelValues(sp.config.JobName).Observe(
@@ -569,6 +577,9 @@ func (sp *scrapePool) sync(targets []*Target) {
 			if sp.enableProtobufNegotiation {
 				acceptHeader = scrapeAcceptHeaderWithProtobuf
 			}
+			//     //生成targetScraper，其中封装了Target和client
+			// //Target封装了采集点请求IP、端口、请求参数等信息，通过这些信息构建HTTP请求Request
+			// //client是封装了认证信息的http请求客户端工具，用于将http请求request发送出去
 			s := &targetScraper{Target: t, client: sp.client, timeout: timeout, bodySizeLimit: bodySizeLimit, acceptHeader: acceptHeader}
 			l := sp.newLoop(scrapeLoopOptions{
 				target:                  t,
@@ -592,7 +603,15 @@ func (sp *scrapePool) sync(targets []*Target) {
 
 			uniqueLoops[hash] = l
 		} else {
+			//sp.activeTargets存在则可能：
+			//1、重复的采集点：直接忽略即可
+			//2、之前发现并启动的采集点：设置uniqueLoops[hash] = nil，则后续启动loop时不用启动
+
+			//target在sp.activeTargets已存在，但是uniqueLoops不存在，说明该采集点之前就被发现过并被启动，当前发现的和之前一致未变
+			//uniqueLoops[hash] = nil表示当前还是存在，但是不需要启动，后面对于sp.activeTargets存在但是uniqueLoops中不存在的采集点，则为采集点消失，需要停止loop并移除掉
+
 			// This might be a duplicated target.
+
 			if _, ok := uniqueLoops[hash]; !ok {
 				uniqueLoops[hash] = nil
 			}
@@ -605,8 +624,11 @@ func (sp *scrapePool) sync(targets []*Target) {
 	var wg sync.WaitGroup
 
 	// Stop and remove old targets and scraper loops.
+	// uniqueLoops存储当前抓取job所有有效采集点，不在该集合中的采集点需要停止并移除，如之前存在的采集点，但是当前又消失不见的采集点：
+	//uniqueLoops中value=nil的是不需要启动，之前服务发现过并被启动的；value不是nil则表示需要启动
 	for hash := range sp.activeTargets {
 		if _, ok := uniqueLoops[hash]; !ok {
+			//移除
 			wg.Add(1)
 			go func(l loop) {
 				l.stop()
@@ -627,6 +649,8 @@ func (sp *scrapePool) sync(targets []*Target) {
 	}
 	for _, l := range uniqueLoops {
 		if l != nil {
+			// 这里去执行池里面的job 开始采集
+			// 最后，执行scrapeLoop的run方法，启动scrapeLoop组件：
 			go l.run(nil)
 		}
 	}
@@ -772,6 +796,7 @@ func appender(app storage.Appender, sampleLimit, bucketLimit int) storage.Append
 }
 
 // A scraper retrieves samples and accepts a status report at the end.
+// scrapeLoop中还有个关键的类型targetScraper，它才是真正执行http请求组件，其实现scraper接口(如下)，其中scrape就是一次http请求逻辑封装：
 type scraper interface {
 	scrape(ctx context.Context, w io.Writer) (string, error)
 	Report(start time.Time, dur time.Duration, err error)
@@ -871,8 +896,10 @@ func (s *targetScraper) scrape(ctx context.Context, w io.Writer) (string, error)
 
 // A loop can run and be stopped again. It must not be reused after it was stopped.
 type loop interface {
+	// 启动 就是启动http数据抓取，入参interval指定循环抓取指标间隔；
 	run(errc chan<- error)
 	setForcedError(err error)
+	// stop方法则是停止http数据采集。
 	stop()
 	getCache() *scrapeCache
 	disableEndOfRunStalenessMarkers()
@@ -1279,7 +1306,8 @@ mainLoop:
 				scrapeTime = alignedScrapeTime
 			}
 		}
-
+		// 这里真正逻辑 scrape 与 汇报
+		// scrapeLoop中还有个关键的类型targetScraper，它才是真正执行http请求组件，其实现scraper接口(如下)，其中scrape就是一次http请求逻辑封装：
 		last = sl.scrapeAndReport(last, scrapeTime, errc)
 
 		select {
@@ -1334,6 +1362,7 @@ func (sl *scrapeLoop) scrapeAndReport(last, appendTime time.Time, errc chan<- er
 	}()
 
 	defer func() {
+		// 汇报
 		if err = sl.report(app, appendTime, time.Since(start), total, added, seriesAdded, bytes, scrapeErr); err != nil {
 			level.Warn(sl.l).Log("msg", "Appending scrape report failed", "err", err)
 		}
@@ -1356,6 +1385,7 @@ func (sl *scrapeLoop) scrapeAndReport(last, appendTime time.Time, errc chan<- er
 
 	var contentType string
 	scrapeCtx, cancel := context.WithTimeout(sl.parentCtx, sl.timeout)
+	// httpScrape  targetScraper核心抓取逻辑
 	contentType, scrapeErr = sl.scraper.scrape(scrapeCtx, buf)
 	cancel()
 

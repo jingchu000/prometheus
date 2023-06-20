@@ -35,7 +35,7 @@ type Discoverer interface {
 	// Run hands a channel to the discovery provider (Consul, DNS, etc.) through which
 	// it can send updated target groups. It must return when the context is canceled.
 	// It should not close the update channel on returning.
-	Run(ctx context.Context, up chan<- []*targetgroup.Group)
+	Run(ctx context.Context, up chan<- []*targetgroup.Group) // 服务发现协议实现逻辑运行入口
 }
 
 // DiscovererOptions provides options for a Discoverer.
@@ -50,11 +50,13 @@ type DiscovererOptions struct {
 // A Config provides the configuration and constructor for a Discoverer.
 type Config interface {
 	// Name returns the name of the discovery mechanism.
-	Name() string
+	Name() string // 服务发现协议类型 ： 定义服务发现协议类型，如eureka、kubernetes等等；
 
 	// NewDiscoverer returns a Discoverer for the Config
 	// with the given DiscovererOptions.
 	NewDiscoverer(DiscovererOptions) (Discoverer, error)
+	// 服务发现协议：返回一个Discoverer类型变量，该类型也是一个接口，其只定义了一个方法Run方法，
+	// 即Discoverer是对应的服务发现协议具体运行逻辑封装，通过Run方法提供统一的运行入口。
 }
 
 // Configs is a slice of Config values that uses custom YAML marshaling and unmarshaling

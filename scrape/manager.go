@@ -196,6 +196,7 @@ func (m *Manager) reloader() {
 		case <-ticker.C:
 			select {
 			case <-m.triggerReload:
+				// 这里重新加载
 				m.reload()
 			case <-m.graceShut:
 				return
@@ -225,6 +226,7 @@ func (m *Manager) reload() {
 		wg.Add(1)
 		// Run the sync in parallel as these take a while and at high load can't catch up.
 		go func(sp *scrapePool, groups []*targetgroup.Group) {
+			// 这里把服务发现的更新同步 下去
 			sp.Sync(groups)
 			wg.Done()
 		}(m.scrapePools[setName], groups)
