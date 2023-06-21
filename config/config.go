@@ -217,17 +217,18 @@ var (
 )
 
 // Config is the top-level configuration for Prometheus's config files.
+// Config结构体是配置类的最顶层结构，内部包含6个字段分别对应prometheus配置的6大组成部分。
 type Config struct {
-	GlobalConfig      GlobalConfig    `yaml:"global"`
-	AlertingConfig    AlertingConfig  `yaml:"alerting,omitempty"`
-	RuleFiles         []string        `yaml:"rule_files,omitempty"`
+	GlobalConfig      GlobalConfig    `yaml:"global"`               // global全剧配置
+	AlertingConfig    AlertingConfig  `yaml:"alerting,omitempty"`   // alerting告警配置
+	RuleFiles         []string        `yaml:"rule_files,omitempty"` // rule 规则配置
 	ScrapeConfigFiles []string        `yaml:"scrape_config_files,omitempty"`
-	ScrapeConfigs     []*ScrapeConfig `yaml:"scrape_configs,omitempty"`
+	ScrapeConfigs     []*ScrapeConfig `yaml:"scrape_configs,omitempty"` // 采集job配置
 	StorageConfig     StorageConfig   `yaml:"storage,omitempty"`
 	TracingConfig     TracingConfig   `yaml:"tracing,omitempty"`
 
-	RemoteWriteConfigs []*RemoteWriteConfig `yaml:"remote_write,omitempty"`
-	RemoteReadConfigs  []*RemoteReadConfig  `yaml:"remote_read,omitempty"`
+	RemoteWriteConfigs []*RemoteWriteConfig `yaml:"remote_write,omitempty"` // 远程写配置
+	RemoteReadConfigs  []*RemoteReadConfig  `yaml:"remote_read,omitempty"`  // 远程读配置
 }
 
 // SetDirectory joins any relative file paths with dir.
@@ -474,25 +475,36 @@ type ScrapeConfigs struct {
 }
 
 // ScrapeConfig configures a scraping unit for Prometheus.
+// 其中数据采集配置部分ScrapeConfigs对应的是一个*ScrapeConfig类型切片，
+// 一个ScrapeConfig对应的是scrape_configs配置下的一个job抓取任务，服务发现协议配置对应其中ServiceDiscoveryConfigs字段：
+//   - job_name: 'prometheus'
+//     metrics_path: /metrics
+//     static_configs:
+//   - targets: ['124.222.45.207:9090']
+//     file_sd_configs:
+//   - files:
+//   - targets/t1.json
+//   - targets/t2.json
+//     refresh_interval: 5m
 type ScrapeConfig struct {
 	// The job name to which the job label is set by default.
-	JobName string `yaml:"job_name"`
+	JobName string `yaml:"job_name"` // job名称
 	// Indicator whether the scraped metrics should remain unmodified.
-	HonorLabels bool `yaml:"honor_labels,omitempty"`
+	HonorLabels bool `yaml:"honor_labels,omitempty"` // honor_labels配置标签冲突处理机制
 	// Indicator whether the scraped timestamps should be respected.
-	HonorTimestamps bool `yaml:"honor_timestamps"`
+	HonorTimestamps bool `yaml:"honor_timestamps"` // 配置采集样本采用客户端or服务端时间戳
 	// A set of query parameters with which the target is scraped.
-	Params url.Values `yaml:"params,omitempty"`
+	Params url.Values `yaml:"params,omitempty"` // 配置调用采集点http请求参数
 	// How frequently to scrape the targets of this scrape config.
-	ScrapeInterval model.Duration `yaml:"scrape_interval,omitempty"`
+	ScrapeInterval model.Duration `yaml:"scrape_interval,omitempty"` //配置抓取时间间隔
 	// The timeout for scraping targets of this config.
-	ScrapeTimeout model.Duration `yaml:"scrape_timeout,omitempty"`
+	ScrapeTimeout model.Duration `yaml:"scrape_timeout,omitempty"` // 配置抓取超时时间
 	// Whether to scrape a classic histogram that is also exposed as a native histogram.
 	ScrapeClassicHistograms bool `yaml:"scrape_classic_histograms,omitempty"`
 	// The HTTP resource path on which to fetch metrics from targets.
-	MetricsPath string `yaml:"metrics_path,omitempty"`
+	MetricsPath string `yaml:"metrics_path,omitempty"` // 配置http请求路径
 	// The URL scheme with which to fetch metrics from targets.
-	Scheme string `yaml:"scheme,omitempty"`
+	Scheme string `yaml:"scheme,omitempty"` // 配置请求协议 http  or  https
 	// An uncompressed response body larger than this many bytes will cause the
 	// scrape to fail. 0 means no limit.
 	BodySizeLimit units.Base2Bytes `yaml:"body_size_limit,omitempty"`
@@ -501,7 +513,7 @@ type ScrapeConfig struct {
 	SampleLimit uint `yaml:"sample_limit,omitempty"`
 	// More than this many targets after the target relabeling will cause the
 	// scrapes to fail. 0 means no limit.
-	TargetLimit uint `yaml:"target_limit,omitempty"`
+	TargetLimit uint `yaml:"target_limit,omitempty"` // 限制job下采集点数量
 	// More than this many labels post metric-relabeling will cause the scrape to
 	// fail. 0 means no limit.
 	LabelLimit uint `yaml:"label_limit,omitempty"`
@@ -518,13 +530,13 @@ type ScrapeConfig struct {
 	// We cannot do proper Go type embedding below as the parser will then parse
 	// values arbitrarily into the overflow maps of further-down types.
 
-	ServiceDiscoveryConfigs discovery.Configs       `yaml:"-"`
-	HTTPClientConfig        config.HTTPClientConfig `yaml:",inline"`
+	ServiceDiscoveryConfigs discovery.Configs       `yaml:"-"`       // 服务发现配置
+	HTTPClientConfig        config.HTTPClientConfig `yaml:",inline"` // 采集点认证信息
 
 	// List of target relabel configurations.
-	RelabelConfigs []*relabel.Config `yaml:"relabel_configs,omitempty"`
+	RelabelConfigs []*relabel.Config `yaml:"relabel_configs,omitempty"` // relabel_configs配置
 	// List of metric relabel configurations.
-	MetricRelabelConfigs []*relabel.Config `yaml:"metric_relabel_configs,omitempty"`
+	MetricRelabelConfigs []*relabel.Config `yaml:"metric_relabel_configs,omitempty"` // metric_relabel_configs配置
 }
 
 // SetDirectory joins any relative file paths with dir.

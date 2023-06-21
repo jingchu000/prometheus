@@ -46,20 +46,25 @@ const (
 )
 
 // Target refers to a singular HTTP or HTTPS endpoint.
+// 「Target只是包含采集点信息，scrapeLoop实现loop接口，封装了发送http请求采集数据指标逻辑的Target执行单元：」
 type Target struct {
 	// Labels before any processing.
+	//服务发现标签，即未经过relabel处理的标签
 	discoveredLabels labels.Labels
 	// Any labels that are added to this target and its metrics.
+	//经过relabel处理之后标签
 	labels labels.Labels
 	// Additional URL parameters that are part of the target URL.
+	//http请求参数/
 	params url.Values
 
 	mtx                sync.RWMutex
 	lastError          error
 	lastScrape         time.Time
 	lastScrapeDuration time.Duration
-	health             TargetHealth
-	metadata           MetricMetadataStore
+	//采集点状态：up、down、unknown
+	health   TargetHealth
+	metadata MetricMetadataStore
 }
 
 // NewTarget creates a reasonably configured target for querying.

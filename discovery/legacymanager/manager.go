@@ -77,9 +77,9 @@ type poolKey struct {
 
 // provider holds a Discoverer instance, its configuration and its subscribers.
 type provider struct {
-	name   string
+	name   string // provider名称，格式：fmt.Sprintf("%s/%d", typ, len(m.providers))
 	d      discovery.Discoverer
-	subs   []string
+	subs   []string // string切片，存放job名称，因为可能不同job下存在一致的服务发现配置，就只会生成一个provider，然后subs存放job列表；
 	config interface{}
 }
 
@@ -208,8 +208,9 @@ func (m *Manager) startProvider(ctx context.Context, p *provider) {
 	// 添加取消方法
 	m.discoverCancel = append(m.discoverCancel, cancel)
 	// 执行run  每个服务发现都有自己的run方法。
+	// 这里是给服务发现 往updates这个channel中传数据
 	go p.d.Run(ctx, updates)
-	// 更新发现的服务
+	// 更新发现的服务 // 这里updates 是去读到这个数据
 	go m.updater(ctx, p, updates)
 }
 
@@ -218,18 +219,20 @@ func (m *Manager) updater(ctx context.Context, p *provider, updates chan []*targ
 		select {
 		case <-ctx.Done():
 			return
+			// 接受updates数据
 		case tgs, ok := <-updates:
 			receivedUpdates.WithLabelValues(m.name).Inc()
 			if !ok {
 				level.Debug(m.logger).Log("msg", "Discoverer channel closed", "provider", p.name)
 				return
 			}
-
+			// 更新targets
 			for _, s := range p.subs {
 				m.updateGroup(poolKey{setName: s, provider: p.name}, tgs)
 			}
 
 			select {
+			// 发送更新通知
 			case m.triggerSend <- struct{}{}:
 			default:
 			}
@@ -237,6 +240,11 @@ func (m *Manager) updater(ctx context.Context, p *provider, updates chan []*targ
 	}
 }
 
+// 这段代码 让我对channel通信有了新的认识
+// 1。 for循环里面套用这么多select
+// 2。 triggerSend 明明是等待别人发数据来，为啥，还往里面丢一个数据？
+//
+//	其实是为了这次处理，会一直循环等待处理。等待syncCh拿到数据
 func (m *Manager) sender() {
 	ticker := time.NewTicker(m.updatert)
 	defer ticker.Stop()
